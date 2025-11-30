@@ -211,21 +211,46 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 
 ### 4. 初始化数据库
 
+#### 情况 A：从 0 开始部署（全新数据库）
+
 ```bash
 # 激活虚拟环境
 source venv/bin/activate
 
-# 运行应用一次以创建表结构
+# 运行应用一次以创建表结构（SQLAlchemy 会自动创建所有表，包括所有字段）
 python run.py &
 sleep 5
 pkill -f "python run.py"
 
-# 或使用 Alembic（如果配置了）
-# alembic upgrade head
-
 # 初始化种子数据（可选）
 python -m app.seed_data
 ```
+
+**说明**：
+- SQLAlchemy 的 `Base.metadata.create_all()` 会根据模型定义**自动创建完整的表结构**
+- 包括所有字段（如 `mfa_enabled`、`mfa_settings` 等）
+- **不需要运行迁移脚本**，因为表是从模型定义完整创建的
+
+#### 情况 B：已有数据库，升级到新版本
+
+```bash
+# 激活虚拟环境
+source venv/bin/activate
+
+# 运行数据库迁移脚本（自动检查并添加缺失的字段）
+python run_migrations.py
+```
+
+**说明**：
+- `run_migrations.py` 脚本会**自动检查**数据库结构，只添加缺失的字段
+- 如果字段已存在，脚本会跳过，不会重复添加
+- 这意味着可以**安全地多次运行**此脚本，不会造成问题
+- **适用于已有数据库，需要添加新字段的情况**
+
+#### 如何判断？
+
+- **全新部署**：数据库是空的，没有任何表 → 不需要运行迁移脚本
+- **升级部署**：数据库已有数据，但可能缺少新字段 → 需要运行迁移脚本
 
 ### 5. 测试应用
 
@@ -836,9 +861,19 @@ source venv/bin/activate
 # 更新依赖
 pip install -r requirements.txt --upgrade
 
-# 运行数据库迁移（如果有）
-# alembic upgrade head
+# 运行数据库迁移（如果代码中添加了新字段）
+python run_migrations.py
 ```
+
+**何时需要运行迁移脚本**：
+- ✅ **代码更新包含新的数据库字段**（如新增 `mfa_settings` 字段）
+- ❌ **只是修复 bug 或功能优化，没有数据库结构变化** → 不需要运行
+
+**注意**：`run_migrations.py` 脚本是**幂等的**（idempotent），可以安全地多次运行。它会：
+- 检查每个字段是否已存在
+- 只添加缺失的字段
+- 不会修改现有数据
+- 不会重复添加已存在的字段
 
 ### 2. 重启服务
 
