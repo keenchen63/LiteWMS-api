@@ -1,6 +1,6 @@
 # 后端生产部署指南
 
-本文档详细说明如何将库存管理系统后端部署到生产环境。
+本文档详细说明如何将 LiteWMS 后端部署到生产环境。
 
 ## 📋 目录
 
@@ -277,7 +277,7 @@ sudo nano /etc/systemd/system/inventory-backend.service
 
 ```ini
 [Unit]
-Description=Inventory Management Backend API
+Description=LiteWMS Backend API
 After=network.target postgresql.service
 Requires=postgresql.service
 

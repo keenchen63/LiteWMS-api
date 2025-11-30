@@ -18,8 +18,8 @@ limiter = Limiter(key_func=get_remote_address)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="Inventory Management API",
-    description="库存管理系统后端 API",
+    title="LiteWMS API",
+    description="LiteWMS 轻量级仓库管理系统后端 API",
     version="1.0.0"
 )
 
@@ -62,7 +62,7 @@ app.include_router(mfa.router, prefix="/api/mfa", tags=["mfa"])
 
 @app.get("/")
 def root():
-    return {"message": "Inventory Management API", "version": "1.0.0"}
+    return {"message": "LiteWMS API", "version": "1.0.0"}
 
 @app.get("/api/health")
 def health_check():

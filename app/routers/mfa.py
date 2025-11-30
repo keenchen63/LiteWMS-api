@@ -279,10 +279,12 @@ def setup_mfa(
     secret = pyotp.random_base32()
     
     # Get existing secrets or initialize empty list
+    # IMPORTANT: Create a new list to ensure SQLAlchemy detects the change
     if admin.totp_secret is None:
         secrets_list = []
     elif isinstance(admin.totp_secret, list):
-        secrets_list = admin.totp_secret
+        # Create a deep copy to ensure SQLAlchemy detects the change
+        secrets_list = [dict(device) for device in admin.totp_secret] if admin.totp_secret else []
     elif isinstance(admin.totp_secret, str):
         # Try to parse as JSON (handles both single string and JSON string)
         try:
@@ -328,8 +330,11 @@ def setup_mfa(
     secrets_list.append(new_device)
     
     # Update admin's TOTP secret
-    admin.totp_secret = secrets_list
+    # Create a new list to ensure SQLAlchemy detects the change
+    admin.totp_secret = list(secrets_list)  # Create a new list object
     db.commit()
+    # Expire the object to force reload from database
+    db.expire(admin, ['totp_secret'])
     db.refresh(admin)
     
     # Log device addition
@@ -404,49 +409,28 @@ def verify_mfa(
     db: Session = Depends(get_db)
 ):
     """Verify TOTP code (public endpoint, no auth required) - checks all devices, any match passes"""
-    # 手动检查速率限制
+    # 速率限制：只对失败的验证进行限制，成功的验证不计入限制
+    # 这样可以防止暴力破解，同时不影响正常使用
     limiter = request.app.state.limiter
-    try:
-        # 使用 limiter 的 limiter 对象（RateLimiter）来检查限制
-        from limits import parse_many
-        
-        # 解析限制字符串 "5/minute"
-        limit_items = parse_many("5/minute")
-        
-        # 获取客户端标识符
-        key = get_remote_address(request)
-        
-        # 检查每个限制项
-        for limit_item in limit_items:
-            # 使用 limiter 的 limiter 对象（RateLimiter）来检查
-            # hit() 方法返回 True 如果未超过限制（可以继续），False 如果超过限制
-            # 注意：hit() 返回 False 表示超过限制
-            if not limiter.limiter.hit(limit_item, key):
-                # 超过限制，直接抛出 HTTPException
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="请求过于频繁，请稍后再试（每分钟最多 5 次）"
-                )
-    except HTTPException:
-        # 重新抛出 HTTPException（包括我们刚抛出的 429 错误）
-        raise
-    except Exception as e:
-        # 其他异常（如 RateLimitExceeded）也转换为 HTTPException
-        if isinstance(e, RateLimitExceeded):
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="请求过于频繁，请稍后再试（每分钟最多 5 次）"
-            )
-        # 其他异常继续抛出
-        raise
+    
     try:
         admin = get_admin(db)
+        
+        # Force expire and refresh to get latest data from database (important when multiple devices are added)
+        db.expire(admin, ['totp_secret'])
+        db.refresh(admin)
         
         if not admin.totp_secret:
             raise HTTPException(status_code=400, detail="MFA not set up")
         
         # Log verification attempt
         logger.debug(f"Verifying TOTP code. Admin totp_secret type: {type(admin.totp_secret)}")
+        
+        # Log the number of devices for debugging
+        if isinstance(admin.totp_secret, list):
+            logger.debug(f"Total devices in database: {len(admin.totp_secret)}")
+        elif isinstance(admin.totp_secret, str):
+            logger.debug(f"totp_secret is a string (may need parsing)")
         
         # Handle both old format (single string) and new format (list)
         # The data might be stored as a string (if column is VARCHAR) or as a list (if column is JSON)
@@ -497,19 +481,53 @@ def verify_mfa(
             device_name = device.get("name", f"Device {idx+1}") if isinstance(device, dict) else "Unknown"
             if secret:
                 try:
+                    logger.debug(f"Trying device {idx+1}/{len(secrets_list)}: {device_name} (secret length: {len(secret) if secret else 0})")
                     totp = pyotp.TOTP(secret)
                     # Increase valid_window to 2 (allows ±60 seconds) for better tolerance
                     if totp.verify(mfa_request.totp_code, valid_window=2):
-                        logger.info(f"Verification successful with device: {device_name}")
+                        logger.info(f"Verification successful with device: {device_name} (device {idx+1}/{len(secrets_list)})")
                         return {"verified": True}
                     else:
-                        logger.debug(f"Verification failed for device: {device_name}")
+                        logger.debug(f"Verification failed for device: {device_name} (device {idx+1}/{len(secrets_list)})")
                 except Exception as e:
                     # Skip invalid secret format, try next device
                     logger.warning(f"Error verifying secret for device {device_name}: {e}")
                     continue
         
-        # None of the secrets matched
+        # None of the secrets matched - 验证失败，检查速率限制
+        # 只对失败的验证进行速率限制，成功的验证不计入限制
+        try:
+            from limits import parse_many
+            
+            # 解析限制字符串 "10/minute" - 提高失败验证的限制次数
+            limit_items = parse_many("10/minute")
+            
+            # 获取客户端标识符
+            key = get_remote_address(request)
+            
+            # 检查每个限制项
+            for limit_item in limit_items:
+                # hit() 方法返回 True 如果未超过限制（可以继续），False 如果超过限制
+                if not limiter.limiter.hit(limit_item, key):
+                    # 超过限制，抛出 HTTPException
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="验证失败次数过多，请稍后再试（每分钟最多 10 次失败尝试）"
+                    )
+        except HTTPException:
+            # 重新抛出 HTTPException（包括我们刚抛出的 429 错误）
+            raise
+        except Exception as e:
+            # 其他异常（如 RateLimitExceeded）也转换为 HTTPException
+            if isinstance(e, RateLimitExceeded):
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="验证失败次数过多，请稍后再试（每分钟最多 10 次失败尝试）"
+                )
+            # 其他异常继续抛出
+            raise
+        
+        # 验证失败，但未超过速率限制
         raise HTTPException(status_code=401, detail="验证码错误")
     except HTTPException:
         # Re-raise HTTP exceptions as-is
