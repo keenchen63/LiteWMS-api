@@ -78,6 +78,15 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
   - **速率限制**：每个 IP 地址每 5 分钟最多 5 次失败尝试（防止暴力破解）
   - 超过限制后返回 `429 Too Many Requests` 错误
 
+**忘记密码处理**：
+如果忘记了 MFA 管理页面的登录密码，可以使用 `reset_admin_password.py` 脚本重置：
+```bash
+cd backend
+source venv/bin/activate
+python reset_admin_password.py
+```
+详见 `TROUBLESHOOTING.md` 中的"忘记 MFA 页面登录密码"章节。
+
 #### MFA 设备管理
 - `POST /api/mfa/setup` - 添加新的 MFA 设备，生成 TOTP 密钥和二维码（需要 JWT 认证）
   - 查询参数：`device_name` - 设备名称（可选）

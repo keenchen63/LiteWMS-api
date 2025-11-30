@@ -352,3 +352,102 @@ echo "DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost:5432/$DB_NAME"
 - **端口被占用：** `sudo netstat -tlnp | grep 5432`
 - **防火墙阻止：** 检查防火墙设置（本地连接通常不受影响）
 
+## 忘记 MFA 页面登录密码
+
+### 问题诊断
+
+如果忘记了 MFA 管理页面的登录密码，无法登录进行 MFA 设备管理或修改密码。
+
+### 解决步骤
+
+#### 方法一：使用密码重置脚本（推荐）
+
+```bash
+cd backend
+source venv/bin/activate  # 激活虚拟环境
+python reset_admin_password.py
+```
+
+脚本会提示您输入新密码，并确认密码。重置成功后，可以使用新密码登录 MFA 管理页面。
+
+**注意：**
+- 重置密码不会影响已配置的 MFA 设备
+- 重置密码后，MFA 设备仍然可以正常使用
+- 建议在生产环境中谨慎使用此脚本
+
+#### 方法二：直接操作数据库
+
+如果脚本无法使用，可以直接操作数据库：
+
+```bash
+# 连接到数据库
+psql -U your_username -d your_database
+
+# 在 PostgreSQL 中执行
+# 首先需要生成密码哈希（使用 Python）
+```
+
+**生成密码哈希：**
+
+```python
+# 在 Python 中执行
+from passlib.context import CryptContext
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+password_hash = pwd_context.hash("your_new_password")
+print(password_hash)
+```
+
+**更新数据库：**
+
+```sql
+-- 将上面生成的密码哈希替换到下面的 SQL 中
+UPDATE admin 
+SET password_hash = '生成的密码哈希',
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = (SELECT id FROM admin LIMIT 1);
+```
+
+#### 方法三：使用 Python 交互式环境
+
+```bash
+cd backend
+source venv/bin/activate
+python
+```
+
+```python
+from sqlalchemy import create_engine, text
+from app.config import settings
+from app.routers.mfa import get_password_hash
+
+# 连接数据库
+engine = create_engine(settings.DATABASE_URL)
+
+# 生成新密码哈希
+new_password = "your_new_password_here"
+password_hash = get_password_hash(new_password)
+
+# 更新数据库
+with engine.connect() as conn:
+    conn.execute(text("""
+        UPDATE admin 
+        SET password_hash = :password_hash,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = (SELECT id FROM admin LIMIT 1)
+    """), {"password_hash": password_hash})
+    conn.commit()
+
+print("密码重置成功！")
+```
+
+### 验证
+
+重置密码后，访问 MFA 管理页面（`http://your-domain/mfa`），使用新密码登录验证。
+
+### 安全建议
+
+1. **定期备份数据库**：确保可以恢复管理员账户
+2. **记录密码**：将密码保存在安全的密码管理器中
+3. **使用强密码**：至少 12 位，包含字母、数字和特殊字符
+4. **限制脚本访问**：确保 `reset_admin_password.py` 脚本只有管理员可以访问
+

@@ -484,7 +484,7 @@ def verify_mfa(
                     logger.debug(f"Trying device {idx+1}/{len(secrets_list)}: {device_name} (secret length: {len(secret) if secret else 0})")
                     totp = pyotp.TOTP(secret)
                     # Increase valid_window to 2 (allows ±60 seconds) for better tolerance
-                    if totp.verify(mfa_request.totp_code, valid_window=2):
+                    if totp.verify(mfa_request.totp_code, valid_window=1):
                         logger.info(f"Verification successful with device: {device_name} (device {idx+1}/{len(secrets_list)})")
                         return {"verified": True}
                     else:
