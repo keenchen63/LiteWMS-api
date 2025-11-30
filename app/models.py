@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Numeric
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Numeric, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
@@ -62,6 +62,8 @@ class Admin(Base):
     id = Column(Integer, primary_key=True, index=True)
     password_hash = Column(String, nullable=True)  # NULL means password not set yet
     totp_secret = Column(JSON, nullable=True)  # Changed to JSON to store array of secrets: [{"secret": "...", "name": "设备1", "created_at": "..."}, ...]
+    mfa_enabled = Column(Boolean, default=True, nullable=False)  # MFA 开关，默认启用
+    mfa_settings = Column(JSON, nullable=True)  # 细粒度 MFA 配置: {"inbound": true, "outbound": false, ...}
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

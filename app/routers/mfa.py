@@ -108,6 +108,11 @@ class AdminStatusResponse(BaseModel):
     password_set: bool
     mfa_set: bool
     mfa_count: int = 0
+    mfa_enabled: bool = True
+    mfa_settings: dict = {}  # 细粒度 MFA 配置
+
+class MFASettingsRequest(BaseModel):
+    settings: dict  # 细粒度 MFA 配置字典
 
 class MFADeviceInfo(BaseModel):
     id: str
@@ -126,6 +131,12 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
 
+class ToggleMFARequest(BaseModel):
+    enabled: bool
+
+class MFASettingsRequest(BaseModel):
+    settings: dict  # 细粒度 MFA 配置字典
+
 # Endpoints
 @router.get("/status", response_model=AdminStatusResponse)
 def get_admin_status(db: Session = Depends(get_db)):
@@ -139,10 +150,35 @@ def get_admin_status(db: Session = Depends(get_db)):
         elif isinstance(admin.totp_secret, str):
             mfa_count = 1  # Legacy format
     
+    # 如果 mfa_enabled 字段不存在（旧数据），默认为 True
+    mfa_enabled = admin.mfa_enabled if hasattr(admin, 'mfa_enabled') and admin.mfa_enabled is not None else True
+    
+    # 获取细粒度 MFA 配置，如果不存在则使用默认值
+    default_settings = {
+        "inbound": True,
+        "outbound": False,
+        "transfer": True,
+        "adjust": True,
+        "category_create": True,
+        "category_update": True,
+        "category_delete": True,
+        "warehouse_create": True,
+        "warehouse_update": True,
+        "warehouse_delete": True
+    }
+    
+    if admin.mfa_settings and isinstance(admin.mfa_settings, dict):
+        # 合并默认值和现有配置，确保所有字段都存在
+        mfa_settings = {**default_settings, **admin.mfa_settings}
+    else:
+        mfa_settings = default_settings
+    
     return {
         "password_set": admin.password_hash is not None,
         "mfa_set": mfa_count > 0,
-        "mfa_count": mfa_count
+        "mfa_count": mfa_count,
+        "mfa_enabled": mfa_enabled,
+        "mfa_settings": mfa_settings
     }
 
 @router.post("/set-password")
@@ -342,7 +378,7 @@ def setup_mfa(
     # Generate QR code
     totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(
         name=f"Admin-{device_name}",
-        issuer_name="Inventory Management"
+        issuer_name="LiteWMS"
     )
     
     qr = qrcode.QRCode(version=1, box_size=10, border=5)
@@ -680,4 +716,105 @@ def delete_mfa_device(
             raise HTTPException(status_code=404, detail="Device not found")
     
     raise HTTPException(status_code=400, detail="Invalid MFA configuration")
+
+@router.post("/toggle")
+def toggle_mfa(
+    request: ToggleMFARequest,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Enable or disable MFA verification"""
+    admin = get_current_admin(authorization, db)
+    
+    # 检查是否有 MFA 设备
+    mfa_count = 0
+    if admin.totp_secret:
+        if isinstance(admin.totp_secret, list):
+            mfa_count = len(admin.totp_secret)
+        elif isinstance(admin.totp_secret, str):
+            mfa_count = 1  # Legacy format
+    
+    if request.enabled and mfa_count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="无法启用 MFA：请先添加至少一个 MFA 设备"
+        )
+    
+    # 更新 MFA 启用状态
+    admin.mfa_enabled = request.enabled
+    db.commit()
+    
+    logger.info(f"MFA {'enabled' if request.enabled else 'disabled'} by admin")
+    
+    return {
+        "message": f"MFA 已{'启用' if request.enabled else '禁用'}",
+        "mfa_enabled": request.enabled
+    }
+
+@router.get("/settings")
+def get_mfa_settings(
+    authorization: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Get granular MFA settings"""
+    admin = get_current_admin(authorization, db)
+    
+    # 默认配置
+    default_settings = {
+        "inbound": True,
+        "outbound": False,
+        "transfer": True,
+        "adjust": True,
+        "category_create": True,
+        "category_update": True,
+        "category_delete": True,
+        "warehouse_create": True,
+        "warehouse_update": True,
+        "warehouse_delete": True
+    }
+    
+    if admin.mfa_settings and isinstance(admin.mfa_settings, dict):
+        # 合并默认值和现有配置
+        settings = {**default_settings, **admin.mfa_settings}
+    else:
+        settings = default_settings
+    
+    return {"settings": settings}
+
+@router.post("/settings")
+def update_mfa_settings(
+    request: MFASettingsRequest,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Update granular MFA settings"""
+    admin = get_current_admin(authorization, db)
+    
+    # 验证配置字段
+    valid_keys = {
+        "inbound", "outbound", "transfer", "adjust",
+        "category_create", "category_update", "category_delete",
+        "warehouse_create", "warehouse_update", "warehouse_delete"
+    }
+    
+    # 过滤无效字段，只保留有效字段
+    filtered_settings = {
+        k: bool(v) for k, v in request.settings.items() 
+        if k in valid_keys
+    }
+    
+    # 合并现有配置（如果有）
+    if admin.mfa_settings and isinstance(admin.mfa_settings, dict):
+        admin.mfa_settings.update(filtered_settings)
+    else:
+        admin.mfa_settings = filtered_settings
+    
+    db.commit()
+    
+    logger.info(f"MFA settings updated: {filtered_settings}")
+    
+    return {
+        "message": "MFA 配置已更新",
+        "settings": admin.mfa_settings
+    }
 
