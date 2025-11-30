@@ -237,15 +237,15 @@ python -m app.seed_data
 # 激活虚拟环境
 source venv/bin/activate
 
-# 运行数据库迁移脚本（自动检查并添加缺失的字段）
-python run_migrations.py
+# 数据库结构由 SQLAlchemy 自动管理
+# 首次部署时，运行应用会自动创建所有表
+# 如果代码中添加了新字段，需要手动执行 SQL 或重新创建表
 ```
 
 **说明**：
-- `run_migrations.py` 脚本会**自动检查**数据库结构，只添加缺失的字段
-- 如果字段已存在，脚本会跳过，不会重复添加
-- 这意味着可以**安全地多次运行**此脚本，不会造成问题
-- **适用于已有数据库，需要添加新字段的情况**
+- 首次部署时，运行应用（`python run.py`）会自动创建所有表
+- 如果代码中添加了新字段，需要手动执行 SQL 来添加字段
+- 或者使用 SQLAlchemy 的迁移工具（如 Alembic）进行数据库迁移
 
 #### 如何判断？
 
@@ -861,19 +861,16 @@ source venv/bin/activate
 # 更新依赖
 pip install -r requirements.txt --upgrade
 
-# 运行数据库迁移（如果代码中添加了新字段）
-python run_migrations.py
+# 如果代码中添加了新字段，需要手动执行 SQL 迁移
+# 例如添加 mfa_settings 字段：
+# ALTER TABLE admin ADD COLUMN IF NOT EXISTS mfa_settings JSON;
 ```
 
-**何时需要运行迁移脚本**：
+**何时需要数据库迁移**：
 - ✅ **代码更新包含新的数据库字段**（如新增 `mfa_settings` 字段）
-- ❌ **只是修复 bug 或功能优化，没有数据库结构变化** → 不需要运行
+- ❌ **只是修复 bug 或功能优化，没有数据库结构变化** → 不需要迁移
 
-**注意**：`run_migrations.py` 脚本是**幂等的**（idempotent），可以安全地多次运行。它会：
-- 检查每个字段是否已存在
-- 只添加缺失的字段
-- 不会修改现有数据
-- 不会重复添加已存在的字段
+**注意**：建议使用 Alembic 等专业的数据库迁移工具来管理数据库结构变更，而不是手动执行 SQL。
 
 ### 2. 重启服务
 
