@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from typing import List, Optional
 from app.database import get_db
 from app import models, schemas
+from app.routers.mfa import get_operation_token
 
 router = APIRouter()
 
@@ -68,7 +69,12 @@ def get_item(item_id: int, db: Session = Depends(get_db)):
     return item
 
 @router.post("/", response_model=schemas.InventoryItem)
-def create_item(item: schemas.InventoryItemCreate, db: Session = Depends(get_db)):
+def create_item(
+    item: schemas.InventoryItemCreate,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     # Check if item with same specs exists in the warehouse
     existing_items = db.query(models.InventoryItem).filter(
         and_(
@@ -95,7 +101,13 @@ def create_item(item: schemas.InventoryItemCreate, db: Session = Depends(get_db)
     return db_item
 
 @router.put("/{item_id}", response_model=schemas.InventoryItem)
-def update_item(item_id: int, item_update: schemas.InventoryItemUpdate, db: Session = Depends(get_db)):
+def update_item(
+    item_id: int,
+    item_update: schemas.InventoryItemUpdate,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_item = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first()
     if not db_item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -111,7 +123,12 @@ def update_item(item_id: int, item_update: schemas.InventoryItemUpdate, db: Sess
     return db_item
 
 @router.delete("/{item_id}")
-def delete_item(item_id: int, db: Session = Depends(get_db)):
+def delete_item(
+    item_id: int,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_item = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first()
     if not db_item:
         raise HTTPException(status_code=404, detail="Item not found")

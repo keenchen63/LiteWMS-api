@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from typing import List, Optional
@@ -6,6 +6,7 @@ from datetime import datetime, date
 from pydantic import BaseModel
 from app.database import get_db
 from app import models, schemas
+from app.routers.mfa import get_operation_token
 
 router = APIRouter()
 
@@ -53,7 +54,12 @@ def get_transaction(transaction_id: int, db: Session = Depends(get_db)):
     return transaction
 
 @router.post("/", response_model=schemas.Transaction)
-def create_transaction(transaction: schemas.TransactionCreate, db: Session = Depends(get_db)):
+def create_transaction(
+    transaction: schemas.TransactionCreate,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_transaction = models.Transaction(**transaction.dict())
     db.add(db_transaction)
     db.commit()
@@ -61,7 +67,12 @@ def create_transaction(transaction: schemas.TransactionCreate, db: Session = Dep
     return db_transaction
 
 @router.delete("/{transaction_id}")
-def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
+def delete_transaction(
+    transaction_id: int,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_transaction = db.query(models.Transaction).filter(models.Transaction.id == transaction_id).first()
     if not db_transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -75,7 +86,13 @@ class RevertTransactionRequest(BaseModel):
     notes: str
 
 @router.post("/{transaction_id}/revert", response_model=schemas.Transaction)
-def revert_transaction(transaction_id: int, request: RevertTransactionRequest, db: Session = Depends(get_db)):
+def revert_transaction(
+    transaction_id: int,
+    request: RevertTransactionRequest,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     """
     撤销交易记录：更新原有记录为撤销状态，并执行反向操作来撤回该交易的所有影响
     """

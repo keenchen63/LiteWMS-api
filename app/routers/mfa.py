@@ -8,6 +8,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from collections import defaultdict
+from typing import Optional
 import pyotp
 import qrcode
 import io
@@ -97,6 +98,8 @@ class MFAVerifyRequest(BaseModel):
 
 class MFAVerifyResponse(BaseModel):
     verified: bool
+    operation_token: Optional[str] = None  # 操作 token，用于后续 API 调用
+    expires_in: Optional[int] = None  # token 有效期（秒）
 
 class MFASetupResponse(BaseModel):
     secret: str
@@ -226,6 +229,71 @@ def verify_jwt_token(token: str):
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+def verify_operation_token(token: str):
+    """Verify operation token (for write operations)"""
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="操作需要 MFA 验证，请先完成验证",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("type") != "operation":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="无效的操作 token"
+            )
+        if not payload.get("verified"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="操作 token 未验证"
+            )
+        return payload
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="操作 token 已过期或无效，请重新进行 MFA 验证",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+def get_operation_token(
+    authorization: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Get and verify operation token from Authorization header.
+    Only requires token if MFA is set up and enabled.
+    """
+    admin = get_admin(db)
+    
+    # 检查 MFA 是否已设置
+    mfa_count = 0
+    if admin.totp_secret:
+        if isinstance(admin.totp_secret, list):
+            mfa_count = len(admin.totp_secret)
+        elif isinstance(admin.totp_secret, str):
+            mfa_count = 1  # Legacy format
+    
+    # 如果 MFA 未设置，不需要操作 token
+    if mfa_count == 0:
+        return None
+    
+    # 检查 MFA 全局开关是否启用
+    mfa_enabled = admin.mfa_enabled if hasattr(admin, 'mfa_enabled') and admin.mfa_enabled is not None else True
+    if not mfa_enabled:
+        return None
+    
+    # MFA 已设置且已启用，需要操作 token
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="操作需要 MFA 验证，请在请求头中提供有效的操作 token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    token = authorization.replace("Bearer ", "")
+    return verify_operation_token(token)
 
 def get_current_admin(
     authorization: str = Header(None),
@@ -486,7 +554,17 @@ def verify_mfa(
                     # Increase valid_window to 2 (allows ±60 seconds) for better tolerance
                     if totp.verify(mfa_request.totp_code, valid_window=1):
                         logger.info(f"Verification successful with device: {device_name} (device {idx+1}/{len(secrets_list)})")
-                        return {"verified": True}
+                        # 生成短期操作 token（5 分钟有效）
+                        operation_token_expires = timedelta(minutes=5)
+                        operation_token = create_access_token(
+                            data={"type": "operation", "verified": True},
+                            expires_delta=operation_token_expires
+                        )
+                        return {
+                            "verified": True,
+                            "operation_token": operation_token,
+                            "expires_in": int(operation_token_expires.total_seconds())
+                        }
                     else:
                         logger.debug(f"Verification failed for device: {device_name} (device {idx+1}/{len(secrets_list)})")
                 except Exception as e:

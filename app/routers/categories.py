@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from app.database import get_db
 from app import models, schemas
+from app.routers.mfa import get_operation_token
 
 router = APIRouter()
 
@@ -19,7 +20,12 @@ def get_category(category_id: int, db: Session = Depends(get_db)):
     return category
 
 @router.post("/", response_model=schemas.Category)
-def create_category(category: schemas.CategoryCreate, db: Session = Depends(get_db)):
+def create_category(
+    category: schemas.CategoryCreate,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_category = models.Category(**category.dict())
     db.add(db_category)
     db.commit()
@@ -27,7 +33,13 @@ def create_category(category: schemas.CategoryCreate, db: Session = Depends(get_
     return db_category
 
 @router.put("/{category_id}", response_model=schemas.Category)
-def update_category(category_id: int, category: schemas.CategoryUpdate, db: Session = Depends(get_db)):
+def update_category(
+    category_id: int,
+    category: schemas.CategoryUpdate,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not db_category:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -40,7 +52,12 @@ def update_category(category_id: int, category: schemas.CategoryUpdate, db: Sess
     return db_category
 
 @router.delete("/{category_id}")
-def delete_category(category_id: int, db: Session = Depends(get_db)):
+def delete_category(
+    category_id: int,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not db_category:
         raise HTTPException(status_code=404, detail="Category not found")

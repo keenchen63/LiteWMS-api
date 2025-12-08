@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from app.database import get_db
 from app import models, schemas
+from app.routers.mfa import get_operation_token
 
 router = APIRouter()
 
@@ -19,7 +20,12 @@ def get_warehouse(warehouse_id: int, db: Session = Depends(get_db)):
     return warehouse
 
 @router.post("/", response_model=schemas.Warehouse)
-def create_warehouse(warehouse: schemas.WarehouseCreate, db: Session = Depends(get_db)):
+def create_warehouse(
+    warehouse: schemas.WarehouseCreate,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_warehouse = models.Warehouse(**warehouse.dict())
     db.add(db_warehouse)
     db.commit()
@@ -27,7 +33,13 @@ def create_warehouse(warehouse: schemas.WarehouseCreate, db: Session = Depends(g
     return db_warehouse
 
 @router.put("/{warehouse_id}", response_model=schemas.Warehouse)
-def update_warehouse(warehouse_id: int, warehouse: schemas.WarehouseUpdate, db: Session = Depends(get_db)):
+def update_warehouse(
+    warehouse_id: int,
+    warehouse: schemas.WarehouseUpdate,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_warehouse = db.query(models.Warehouse).filter(models.Warehouse.id == warehouse_id).first()
     if not db_warehouse:
         raise HTTPException(status_code=404, detail="Warehouse not found")
@@ -40,7 +52,12 @@ def update_warehouse(warehouse_id: int, warehouse: schemas.WarehouseUpdate, db: 
     return db_warehouse
 
 @router.delete("/{warehouse_id}")
-def delete_warehouse(warehouse_id: int, db: Session = Depends(get_db)):
+def delete_warehouse(
+    warehouse_id: int,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+    _: Optional[dict] = Depends(get_operation_token)
+):
     db_warehouse = db.query(models.Warehouse).filter(models.Warehouse.id == warehouse_id).first()
     if not db_warehouse:
         raise HTTPException(status_code=404, detail="Warehouse not found")
